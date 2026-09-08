@@ -1,0 +1,41 @@
+FROM almalinux:8
+
+# gcc 8 fails on std::atomic_fetch_add; clang-devel provides libclang for bindgen
+RUN dnf install -y --allowerasing \
+        gcc-toolset-11 gcc-toolset-11-gcc-c++ \
+        git make cmake curl unzip which perl-IPC-Cmd \
+        openssl-devel clang-devel llvm-devel \
+        numactl-devel libatomic && \
+    dnf clean all
+
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH \
+    LD_LIBRARY_PATH=/opt/rh/gcc-toolset-11/root/usr/lib64:$LD_LIBRARY_PATH \
+    LIBCLANG_PATH=/usr/lib64
+
+# ppc64le build; the x86_64 release will not run here
+ARG PROTOC_VERSION=21.12
+RUN curl -sSL -o /tmp/protoc.zip \
+      https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-ppcle_64.zip && \
+    unzip -o /tmp/protoc.zip -d /usr/local bin/protoc && \
+    unzip -o /tmp/protoc.zip -d /usr/local 'include/*' && \
+    rm -f /tmp/protoc.zip && protoc --version
+
+# 1.85.1 (repo default) is too old for current crates; 1.98 breaks metrics 0.23
+ARG RUST_VERSION=1.88.0
+ENV RUSTUP_HOME=/opt/rust CARGO_HOME=/opt/cargo
+ENV PATH=/opt/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --default-toolchain ${RUST_VERSION} --profile minimal && \
+    rustc --version
+
+# conda-forge ships ppc64le binaries that PyPI lacks
+RUN curl -sSL -o /tmp/miniforge.sh \
+      https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-ppc64le.sh && \
+    bash /tmp/miniforge.sh -b -p /opt/conda && rm -f /tmp/miniforge.sh
+ENV PATH=/opt/conda/bin:$PATH
+
+RUN conda create -y -n tgi python=3.11 && conda clean -afy
+ENV CONDA_DEFAULT_ENV=tgi \
+    PATH=/opt/conda/envs/tgi/bin:$PATH
+
+WORKDIR /opt/build
